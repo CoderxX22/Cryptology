@@ -142,4 +142,3 @@ ciphertext = elgamal.encrypt(message_point, pub_key)
 decrypted_point = elgamal.decrypt(ciphertext, priv_key)
 
 assert decrypted_point == message_point
-print("Encryption and decryption successful!")
