@@ -227,7 +227,7 @@ def show_application_info():
     print("This application integrates the International Data Encryption Algorithm (IDEA)")
     print("in Output Feedback (OFB) mode for secure data encryption and decryption.")
     print("")
-    print("It leverages the Elliptic Curve Diffie-Hellman (EC-DH) key exchange protocol")
+    print("It leverages the Elliptic Curve EL-Gamal key exchange protocol")
     print("to generate secure shared secrets for encryption.")
     print("")
     print("To ensure data integrity and authenticity, we use the Schnorr Signature algorithm.")
