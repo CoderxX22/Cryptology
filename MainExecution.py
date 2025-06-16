@@ -1,269 +1,197 @@
+import tkinter as tk
+from tkinter import messagebox, scrolledtext
+from datetime import datetime
 import re
 import time
-from datetime import datetime
+import threading
 from EllipticCurveElGamal import elgamal
 from SchnorrProtocol import SchnorrProtocol
 from InternationalDataEncryptionAlgorithm import InternationalDataEncryptionAlgorithm
 from KeyManager import KeyManager
 
 
-# --- Functions ---
+class PaymentApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Secure Payment Application")
+        self.key_manager = KeyManager()
 
-def perform_handshake(sender_private_key, sender_public_key, receiver_private_key, receiver_public_key, key_manager):
-    print("\nPerforming Full Handshake")
+        self.build_ui()
 
-    schnorr_params = key_manager.getRandomSchnorrParameters()
-    print(f"Schnorr Parameters: {schnorr_params}")
+    def build_ui(self):
+        self.form_frame = tk.Frame(self.root)
+        self.form_frame.pack(pady=10)
 
-    sender_schnorr = SchnorrProtocol(*schnorr_params)
-    sender_schnorr.create_key_pair()
-    r_sender, s_sender = sender_schnorr.generate_signature(str(sender_public_key))
-    print("\nSender Schnorr Signature:")
-    print(f"r: {r_sender}")
-    print(f"s: {s_sender}")
+        self.build_sender_fields()
+        self.build_receiver_fields()
 
-    receiver_schnorr = SchnorrProtocol(*schnorr_params)
-    receiver_schnorr.create_key_pair()
-    r_receiver, s_receiver = receiver_schnorr.generate_signature(str(receiver_public_key))
-    print("\nReceiver Schnorr Signature:")
-    print(f"r: {r_receiver}")
-    print(f"s: {s_receiver}")
+        self.submit_btn = tk.Button(self.root, text="Submit Payment", command=self.run_simulation)
+        self.submit_btn.pack(pady=5)
 
-    sender_signature_valid = receiver_schnorr.validate_signature(
-        str(sender_public_key), r_sender, s_sender, sender_schnorr.public_key
-    )
-    receiver_signature_valid = sender_schnorr.validate_signature(
-        str(receiver_public_key), r_receiver, s_receiver, receiver_schnorr.public_key
-    )
+        self.info_btn = tk.Button(self.root, text="Application Info", command=self.show_application_info)
+        self.info_btn.pack(pady=5)
 
-    if not sender_signature_valid or not receiver_signature_valid:
-        print("Handshake failed: Schnorr signature validation failed!")
-        return None
+        self.output = scrolledtext.ScrolledText(self.root, width=80, height=30)
+        self.output.pack(pady=10)
 
-    print("\nSchnorr signatures validated successfully!")
-    simulate_processing("Generating shared secret", 3)
+    def build_sender_fields(self):
+        self.sender_entries = {}
+        tk.Label(self.form_frame, text="Sender Information").grid(row=0, column=0, columnspan=2)
+        labels = ["Name", "ID", "Card Number", "Expiry Date (MM/YYYY)", "CCV", "Amount"]
+        for i, label in enumerate(labels):
+            tk.Label(self.form_frame, text=label).grid(row=i+1, column=0, sticky='e')
+            entry = tk.Entry(self.form_frame)
+            entry.grid(row=i+1, column=1)
+            self.sender_entries[label] = entry
 
-    shared_secret_sender = elgamal.multiply_point_on_curve(sender_private_key, receiver_public_key)
-    shared_secret_receiver = elgamal.multiply_point_on_curve(receiver_private_key, sender_public_key)
+    def build_receiver_fields(self):
+        self.receiver_entries = {}
+        base_row = 8
+        tk.Label(self.form_frame, text="Receiver Information").grid(row=base_row, column=0, columnspan=2)
+        labels = ["Name", "ID"]
+        for i, label in enumerate(labels):
+            tk.Label(self.form_frame, text=label).grid(row=base_row+i+1, column=0, sticky='e')
+            entry = tk.Entry(self.form_frame)
+            entry.grid(row=base_row+i+1, column=1)
+            self.receiver_entries[label] = entry
 
-    if shared_secret_sender != shared_secret_receiver:
-        print("Handshake failed: Shared secrets do not match!")
-        return None
+    def show_application_info(self):
+        info = (
+            "This app uses:\n"
+            "- IDEA in OFB mode for encryption\n"
+            "- ECC-based ElGamal for key exchange\n"
+            "- Schnorr signatures for authenticity\n"
+        )
+        messagebox.showinfo("Application Info", info)
 
-    confirmation_message = "CONFIRM"
-    iv = b'\x00' * 8
-    sender_encryption_engine = InternationalDataEncryptionAlgorithm(shared_secret_sender[0])
-    encrypted_confirmation = InternationalDataEncryptionAlgorithm.idea_ofb_mode(
-        sender_encryption_engine, iv, confirmation_message.encode('utf-8'), mode="encrypt"
-    )
+    def run_simulation(self):
+        threading.Thread(target=self.simulate_payment).start()
 
-    receiver_decryption_engine = InternationalDataEncryptionAlgorithm(shared_secret_receiver[0])
-    decrypted_confirmation = InternationalDataEncryptionAlgorithm.idea_ofb_mode(
-        receiver_decryption_engine, iv, encrypted_confirmation, mode="decrypt"
-    )
+    def simulate_payment(self):
+        self.output.delete(1.0, tk.END)
+        sender_info = self.validate_sender_info()
+        receiver_info = self.validate_receiver_info()
+        if not sender_info or not receiver_info:
+            return
 
-    if decrypted_confirmation.decode('utf-8').rstrip('\x00') == confirmation_message:
-        print("Shared secret confirmed successfully! Handshake complete.\n")
-        return shared_secret_sender
-    else:
-        print("Shared secret confirmation failed!\n")
-        return None
+        self.write("Generating keys...")
+        s_priv, s_pub = self.key_manager.getPrivateAndPublicKey()
+        r_priv, r_pub = self.key_manager.getPrivateAndPublicKey()
 
+        shared_secret = self.perform_handshake(s_priv, s_pub, r_priv, r_pub)
+        if not shared_secret:
+            return
 
-def simulate_processing(message, delay):
-    print(message, end="", flush=True)
-    for _ in range(delay):
-        print(".", end="", flush=True)
-        time.sleep(1)
-    print()
+        self.write("\nInitiating Payment")
+        data = f"data:{sender_info['name']}|{sender_info['id']}|{sender_info['card_number']}|{sender_info['expiry_date']}|{sender_info['ccv']}|{sender_info['amount']}"
+        iv = b'\x00' * 8
+        engine = InternationalDataEncryptionAlgorithm(shared_secret[0])
+        encrypted = InternationalDataEncryptionAlgorithm.idea_ofb_mode(engine, iv, data.encode(), mode="encrypt")
 
+        self.simulate_processing("Encrypting credentials", 5)
+        self.write(f"\nEncrypted: {encrypted.hex()}")
 
-def get_and_validate_sender_and_receiver_info():
-    sender_info = {}
-    while True:
-        name = input("\nEnter sender's name (letters and spaces only): ")
-        if re.match(r"^[a-zA-Z\s]+$", name):
-            sender_info["name"] = name
-            break
+        schnorr_params = self.key_manager.getRandomSchnorrParameters()
+        schnorr = SchnorrProtocol(*schnorr_params)
+        schnorr.create_key_pair()
+        r, s = schnorr.generate_signature(data)
+        self.simulate_processing("Generating Schnorr signature", 4)
+        self.write(f"\nSchnorr Signature: r={r}, s={s}, y={schnorr.public_key}")
+
+        dec_engine = InternationalDataEncryptionAlgorithm(shared_secret[0])
+        decrypted = InternationalDataEncryptionAlgorithm.idea_ofb_mode(dec_engine, iv, encrypted, mode="decrypt")
+        decrypted = decrypted.decode('utf-8').rstrip('\x00')
+        self.simulate_processing("Decrypting credentials", 5)
+        self.write(f"\nDecrypted: {decrypted}")
+
+        verifier = SchnorrProtocol(*schnorr_params)
+        valid = verifier.validate_signature(decrypted, r, s, schnorr.public_key)
+        self.simulate_processing("Verifying signature", 3)
+        if valid:
+            self.write(f"\nVALID Signature. Payment of {sender_info['amount']} from {sender_info['name']} to {receiver_info['name']} complete.")
         else:
-            print("Invalid name. Please use only letters and spaces.")
+            self.write("\nINVALID Signature. Payment failed.")
 
-    while True:
-        id_number = input("Enter sender's ID (9-digit number): ")
-        if re.match(r"^\d{9}$", id_number):
-            sender_info["id"] = id_number
-            break
-        else:
-            print("Invalid ID. It should be a 9-digit number.")
+    def validate_sender_info(self):
+        info = {}
+        key_map = {
+            "Name": "name",
+            "ID": "id",
+            "Card Number": "card_number",
+            "Expiry Date (MM/YYYY)": "expiry_date",
+            "CCV": "ccv",
+            "Amount": "amount"
+        }
+        patterns = {
+            "Name": r"^[a-zA-Z\s]+$",
+            "ID": r"^\d{9}$",
+            "Card Number": r"^\d{16}$",
+            "Expiry Date (MM/YYYY)": r"^(0[1-9]|1[0-2])/20\d{2}$",
+            "CCV": r"^\d{3}$",
+            "Amount": r"^\d+$"
+        }
+        for label, entry in self.sender_entries.items():
+            value = entry.get().strip()
+            if not re.match(patterns[label], value):
+                messagebox.showerror("Invalid Input", f"Invalid sender {label}")
+                return None
+            if label == "Expiry Date (MM/YYYY)":
+                month, year = map(int, value.split('/'))
+                now = datetime.now()
+                if year < now.year or (year == now.year and month < now.month):
+                    messagebox.showerror("Expired", "Card is expired")
+                    return None
+            info[key_map[label]] = value
+        return info
 
-    while True:
-        card_number = input("Enter card number (16-digit number): ")
-        if re.match(r"^\d{16}$", card_number):
-            sender_info["card_number"] = card_number
-            break
-        else:
-            print("Invalid card number. It should be a 16-digit number.")
+    def validate_receiver_info(self):
+        info = {}
+        for label, entry in self.receiver_entries.items():
+            value = entry.get().strip()
+            if not re.match(r"^[a-zA-Z\s]+$" if label == "Name" else r"^\d{9}$", value):
+                messagebox.showerror("Invalid Input", f"Invalid receiver {label}")
+                return None
+            info[label.lower()] = value
+        return info
 
-    while True:
-        expiry_date = input("Enter expiry date (MM/YYYY): ")
-        if re.match(r"^(0[1-9]|1[0-2])/20\d{2}$", expiry_date):
-            exp_month, exp_year = map(int, expiry_date.split('/'))
-            current_year = datetime.now().year
-            current_month = datetime.now().month
-            if exp_year > current_year or (exp_year == current_year and exp_month >= current_month):
-                sender_info["expiry_date"] = expiry_date
-                break
-            else:
-                print("Card is expired. Please enter a valid future expiry date.")
-        else:
-            print("Invalid expiry date format. Use MM/YYYY.")
+    def perform_handshake(self, s_priv, s_pub, r_priv, r_pub):
+        self.write("\nPerforming handshake")
+        schnorr_params = self.key_manager.getRandomSchnorrParameters()
+        s_schnorr = SchnorrProtocol(*schnorr_params)
+        s_schnorr.create_key_pair()
+        r1, s1 = s_schnorr.generate_signature(str(s_pub))
 
-    while True:
-        ccv = input("Enter CCV (3-digit number): ")
-        if re.match(r"^\d{3}$", ccv):
-            sender_info["ccv"] = ccv
-            break
-        else:
-            print("Invalid CCV. It should be a 3-digit number.")
+        r_schnorr = SchnorrProtocol(*schnorr_params)
+        r_schnorr.create_key_pair()
+        r2, s2 = r_schnorr.generate_signature(str(r_pub))
 
-    while True:
-        amount = input("Enter amount (positive number): ")
-        if amount.isdigit() and int(amount) > 0:
-            sender_info["amount"] = amount
-            break
-        else:
-            print("Invalid amount. Please enter a positive number.")
+        if not r_schnorr.validate_signature(str(s_pub), r1, s1, s_schnorr.public_key):
+            self.write("\nSender Schnorr validation failed")
+            return None
+        if not s_schnorr.validate_signature(str(r_pub), r2, s2, r_schnorr.public_key):
+            self.write("\nReceiver Schnorr validation failed")
+            return None
 
-    receiver_info = {}
-    while True:
-        name = input("\nEnter receiver's name (letters and spaces only): ")
-        if re.match(r"^[a-zA-Z\s]+$", name):
-            receiver_info["name"] = name
-            break
-        else:
-            print("Invalid name. Please use only letters and spaces.")
+        shared1 = elgamal.multiply_point_on_curve(s_priv, r_pub)
+        shared2 = elgamal.multiply_point_on_curve(r_priv, s_pub)
+        if shared1 != shared2:
+            self.write("\nShared secret mismatch")
+            return None
 
-    while True:
-        id_number = input("Enter receiver's ID (9-digit number): ")
-        if re.match(r"^\d{9}$", id_number):
-            receiver_info["id"] = id_number
-            break
-        else:
-            print("Invalid ID. It should be a 9-digit number.")
+        self.write("\nHandshake complete and shared secret confirmed")
+        return shared1
 
-    return sender_info, receiver_info
+    def simulate_processing(self, msg, delay):
+        for i in range(delay):
+            self.write(f"{msg}{'.' * (i + 1)}")
+            time.sleep(1)
 
-
-def simulate_payment():
-    sender_info, receiver_info = get_and_validate_sender_and_receiver_info()
-
-    key_manager = KeyManager()
-    sender_private_key, sender_public_key = key_manager.getPrivateAndPublicKey()
-    print(f"Sender's private key is: {sender_private_key}")
-    print(f"Sender's public key is: {sender_public_key}")
-
-    receiver_private_key, receiver_public_key = key_manager.getPrivateAndPublicKey()
-    print(f"Receiver's private key is: {receiver_private_key}")
-    print(f"Receiver's public key is: {receiver_public_key}")
-
-    shared_secret = perform_handshake(sender_private_key, sender_public_key, receiver_private_key, receiver_public_key,
-                                      key_manager)
-    if shared_secret is None:
-        return
-
-    print("\nInitiating Payment")
-
-    payment_data = (
-        f"data:{sender_info['name']}|{sender_info['id']}|{sender_info['card_number']}|"
-        f"{sender_info['expiry_date']}|{sender_info['ccv']}|{sender_info['amount']}"
-    )
-
-    iv = b'\x00' * 8
-    encryption_engine = InternationalDataEncryptionAlgorithm(shared_secret[0])
-    encrypted_message = InternationalDataEncryptionAlgorithm.idea_ofb_mode(encryption_engine, iv, payment_data.encode(),
-                                                                           mode="encrypt")
-    simulate_processing("Encrypting credentials", 5)
-    print(f"\nEncrypted payment data: {encrypted_message.hex()}")
-
-    schnorr_parameters = key_manager.getRandomSchnorrParameters()
-    print("\nSchnorr's Signature for Encrypted Data")
-    print(f"Prime: {schnorr_parameters[0]}")
-    print(f"Subgroup Order: {schnorr_parameters[1]}")
-    print(f"Generator: {schnorr_parameters[2]}")
-
-    schnorr = SchnorrProtocol(*schnorr_parameters)
-    schnorr.create_key_pair()
-    r, s = schnorr.generate_signature(payment_data)
-    simulate_processing("Generating Schnorr signature", 4)
-    print(f"\nSchnorr Signature:")
-    print(f"r: {r}")
-    print(f"s: {s}")
-    print(f"y: {schnorr.public_key}")
-
-    print("\nReceiving Payment")
-    decryption_engine = InternationalDataEncryptionAlgorithm(shared_secret[0])
-    decrypted_message = InternationalDataEncryptionAlgorithm.idea_ofb_mode(decryption_engine, iv, encrypted_message,
-                                                                           mode="decrypt")
-    decrypted_message = decrypted_message.decode('utf-8').rstrip('\x00')
-    simulate_processing("Decrypting credentials", 5)
-    print(f"Decrypted payment data: {decrypted_message}")
-
-    print("\nSchnorr Verification")
-    simulate_processing("Validating", 4)
-    schnorr_verifier = SchnorrProtocol(*schnorr_parameters)
-    is_valid = schnorr_verifier.validate_signature(decrypted_message, r, s, schnorr.public_key)
-
-    if is_valid:
-        print(f"Schnorr Signature Verification is VALID.")
-        print(
-            f"Payment of {sender_info['amount']} from {sender_info['name']} to {receiver_info['name']} completed.\n\n\n")
-    else:
-        print("Schnorr Signature Verification is INVALID.")
-        print("Payment failed: Signature verification unsuccessful.\n\n\n")
+    def write(self, text):
+        self.output.insert(tk.END, text + '\n')
+        self.output.see(tk.END)
 
 
-def show_application_info():
-    print("Welcome to our Secure Payment Application!")
-    print("This application integrates the International Data Encryption Algorithm (IDEA)")
-    print("in Output Feedback (OFB) mode for secure data encryption and decryption.")
-    print("")
-    print("It leverages the Elliptic Curve EL-Gamal key exchange protocol")
-    print("to generate secure shared secrets for encryption.")
-    print("")
-    print("To ensure data integrity and authenticity, we use the Schnorr Signature algorithm.")
-    print("This ensures that transactions are both tamper-proof and verifiable.")
-    print("")
-    print("Our application provides a comprehensive simulation of secure payment processing,")
-    print("from key generation to encryption, decryption, and signature validation.")
-    print("")
-    print("Experience state-of-the-art cryptographic security, designed with simplicity and precision!\n\n")
-
-
-def display_menu():
-    while True:
-        print("1 >>> Initiating a payment")
-        print("2 >>> Showing application information")
-        print("3 >>> Exit")
-        choice = input("Your choice: ")
-
-        if choice not in ["1", "2", "3"]:
-            print("Please choose a valid option.")
-            continue
-        else:
-            if choice == "1":
-                simulate_payment()
-            elif choice == "2":
-                show_application_info()
-            elif choice == "3":
-                print("Exiting.")
-                break
-
-
-def main():
-    print("#########################")
-    print("Payment System Simulation")
-    print("#########################")
-    display_menu()
-
-
-main()
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = PaymentApp(root)
+    root.mainloop()
